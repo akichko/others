@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>テストページ</title>
+  <style>
+    body {
+      font-family: sans-serif;
+      margin: 40px auto;
+      max-width: 500px;
+    }
+    h1 {
+      text-align: center;
+    }
+    label {
+      font-weight: bold;
+    }
+    input, textarea, button {
+      width: 100%;
+      padding: 8px;
+      margin-top: 6px;
+      margin-bottom: 12px;
+      box-sizing: border-box;
+      font-size: 1rem;
+    }
+    button {
+      width: 48%;
+      cursor: pointer;
+    }
+    .btn-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 4%;
+    }
+    textarea {
+      height: 100px;
+      resize: none;
+    }
+    .disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+
+    /* モーダル用スタイル */
+    .modal-backdrop {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0,0,0,0.5);
+      display: none; /* 表示時はflexにする */
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+    }
+    .modal {
+      background: #fff;
+      padding: 20px;
+      border-radius: 6px;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.2);
+      min-width: 260px;
+      max-width: 90%;
+      text-align: center;
+    }
+    .modal button {
+      width: auto;
+      padding: 8px 14px;
+      font-size: 1rem;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+  <h1>HTTPデータ取得UIテストページ</h1>
+
+  <div>
+    <label for="inputText">入力:</label>
+    <input type="text" id="inputText" placeholder="検索キーワードなど" />
+  </div>
+
+  <div class="btn-row">
+    <button id="sendBtn">送信（ダミー）</button>
+    <button id="realSendBtn">送信（実通信）</button>
+  </div>
+
+  <div>
+    <label for="outputText">出力:</label>
+    <textarea id="outputText" readonly></textarea>
+  </div>
+
+  <div>
+    <label for="logText">ログ:</label>
+    <textarea id="logText" readonly placeholder="エラーやキャンセルのログがここに表示されます。"></textarea>
+  </div>
+
+  <!-- モーダル（最初は非表示） -->
+  <div id="modalBackdrop" class="modal-backdrop" aria-hidden="true">
+    <div class="modal" role="dialog" aria-modal="true" aria-label="処理中ダイアログ">
+    </div>
+  </div>
+
+  <script>
+    const input = document.getElementById("inputText");
+    const output = document.getElementById("outputText");
+    const sendBtn = document.getElementById("sendBtn");
+    const realSendBtn = document.getElementById("realSendBtn");
+    const modalBackdrop = document.getElementById('modalBackdrop');
+    const modalCancelBtn = document.getElementById('modalCancelBtn');
+
+    let cancelled = false;
+    let timer = null;
+    let controller = null; // AbortController for fetch
+    const logBox = document.getElementById('logText');
+
+    function log(msg) {
+      try {
+        const t = new Date().toLocaleTimeString();
+        // 最新1件のみ表示（上書き）
+        logBox.value = `[${t}] ${msg}`;
+      } catch (e) {
+        // ignore
+      }
+    }
+
+    function showModal(message = 'データ取得中', showCancel = true) {
+      const modalContent = `
+        <p style="margin:0 0 12px 0; font-size:1.1rem;">${message}</p>
+        ${showCancel ? 
+          '<button id="modalCancelBtn">キャンセル</button>' : 
+          '<button id="modalOkBtn">OK</button>'}
+      `;
+      const modalDialog = modalBackdrop.querySelector('.modal');
+      modalDialog.innerHTML = modalContent;
+
+      // ボタンのイベントリスナーを再設定
+      if (showCancel) {
+        document.getElementById('modalCancelBtn').addEventListener('click', () => {
+          cancelOperation();
+        });
+      } else {
+        document.getElementById('modalOkBtn').addEventListener('click', () => {
+          hideModal();
+        });
+      }
+
+      modalBackdrop.style.display = 'flex';
+      modalBackdrop.setAttribute('aria-hidden', 'false');
+    }
+
+    function hideModal() {
+      modalBackdrop.style.display = 'none';
+      modalBackdrop.setAttribute('aria-hidden', 'true');
+    }
+
+    // ダミー送信（3秒後に完了）
+    function startOperation(value) {
+      // 状態設定
+      sendBtn.disabled = true;
+      realSendBtn.disabled = true;
+      input.disabled = true;
+      // 送信開始をログに残す（正常出力は output のみ、ステータスはログにも記録）
+      log("情報取得中...");
+      cancelled = false;
+      showModal();
+
+      // 疑似的な外部接続（3秒後に完了）
+      timer = setTimeout(() => {
+        if (!cancelled) {
+          output.value = `取得結果: 「${value}」に関する情報を取得しました。`;
+          // 正常終了をログに記録
+          log("情報取得が正常に終了しました");
+        }
+        sendBtn.disabled = false;
+        realSendBtn.disabled = false;
+        input.disabled = false;
+        hideModal();
+      }, 3000);
+    }
+
+    // 実通信での送信
+    async function startOperationReal(value) {
+      // 状態設定
+      sendBtn.disabled = true;
+      realSendBtn.disabled = true;
+      input.disabled = true;
+      // 送信開始をログに残す（正常出力は output のみ、ステータスはログにも記録）
+      log("情報取得中...");
+      cancelled = false;
+      showModal();
+
+      // JSONPlaceholder /posts/:id を使う（id は 1-100）
+      const id = value;
+      if (!/^[0-9]+$/.test(id) || Number(id) < 1 || Number(id) > 100) {
+        log("入力は1〜100の数字で指定してください。");
+        output.value = "";
+        sendBtn.disabled = false;
+        realSendBtn.disabled = false;
+        input.disabled = false;
+        hideModal();
+        return;
+      }
+
+      controller = new AbortController();
+      const signal = controller.signal;
+
+      try {
+        // 通信前に3秒待機（キャンセル可能）
+        await new Promise((resolve, reject) => {
+          const sleepTimer = setTimeout(resolve, 3000);
+          signal.addEventListener('abort', () => {
+            clearTimeout(sleepTimer);
+            reject(new DOMException('Aborted', 'AbortError'));
+          });
+        });
+
+        const res = await fetch(`https://jsonplaceholder.typicode.com/posts/${encodeURIComponent(id)}`, { signal });
+        if (!res.ok) throw new Error(`通信エラー: ${res.status}`);
+        const data = await res.json();
+        // 正常出力は output にのみ書き込む
+        output.value = `取得成功 ✅\n\nタイトル: ${data.title}\n\n本文:\n${data.body}`;
+        // 正常終了をログに記録
+        log("情報取得が正常に終了しました");
+      } catch (err) {
+        if (err.name === 'AbortError') {
+          // 中断
+          log("処理がキャンセルされました。");
+        } else {
+          log(`エラーが発生しました: ${err.message}`);
+        }
+      } finally {
+        sendBtn.disabled = false;
+        realSendBtn.disabled = false;
+        input.disabled = false;
+        hideModal();
+        controller = null;
+      }
+    }
+
+    function cancelOperation() {
+      cancelled = true;
+      // タイマーがあれば中止
+      if (timer) clearTimeout(timer);
+      // AbortController があれば中止を要求する
+      if (controller) controller.abort();
+      // キャンセルやエラーはログに記録する（出力ボックスは正常時のみ使用）
+      log("処理がキャンセルされました。");
+      sendBtn.disabled = false;
+      realSendBtn.disabled = false;
+      input.disabled = false;
+      hideModal();
+    }
+
+    // ダミー送信（タイマーで3秒後に完了）
+    sendBtn.addEventListener("click", () => {
+      const value = input.value.trim();
+      if (!value) {
+        showModal("入力をしてください。", false);
+        return;
+      }
+
+      startOperation(value);
+    });
+
+    // 実通信での送信（JSONPlaceholderのAPIを使用）
+    realSendBtn.addEventListener("click", () => {
+      const value = input.value.trim();
+      if (!value) {
+        showModal("入力をしてください。", false);
+        return;
+      }
+
+      startOperationReal(value);
+    });
+
+    // モーダル内のキャンセルボタン
+    modalCancelBtn.addEventListener('click', () => {
+      cancelOperation();
+    });
+
+  </script>
+</body>
+</html>
